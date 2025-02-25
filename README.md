@@ -71,3 +71,62 @@ Ensure `.resourcely.yaml` correctly reflects the location of Terraform configura
 ### Validate Manifest Configuration
 
 Verify that your GitHub Actions workflow contains a valid manifest configuration. View the [manifest file](https://github.com/Resourcely-Inc/scaffolding-github-actions/blob/main/.github/workflows/terraform.yml#L89-L101).
+
+### Onboarding Setup Notes 
+If the organization has restricted access to Actions secrets, your token won’t work even if you add workflow.
+
+Check Organization Settings:
+Go to GitHub → Organization Settings → Actions → General
+Scroll down to "Workflow Permissions"
+Make sure "Read and write permissions" is selected.
+
+
+### IAM permissions 
+
+You need to have credentials with the following access 
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "iam:GetRole",
+                "iam:ListRoles",
+                "iam:PassRole"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "iam:ListOpenIDConnectProviders",
+                "iam:GetOpenIDConnectProvider",
+                "iam:CreateOpenIDConnectProvider",
+                "iam:DeleteOpenIDConnectProvider",
+                "iam:UpdateOpenIDConnectProviderThumbprint",
+                "iam:CreateRole",
+                "iam:PassRole",
+                "iam:GetRole",
+                "iam:UpdateAssumeRolePolicy"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3:ListAllMyBuckets",
+                "s3:GetBucketLocation",
+                "s3:ListBucket",
+                "s3:PutObject",
+                "s3:GetObject",
+                "s3:DeleteObject"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": "sts:AssumeRole",
+            "Resource": "arn:aws:iam::315040492946:role/resourcely-tfc"
+        }
+    ]
+}

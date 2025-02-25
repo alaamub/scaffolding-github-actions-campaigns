@@ -39,7 +39,7 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v3
         with:
-          role-to-assume: arn:aws:iam::619071311487:role/GithubActionsOIDCTerraformRunner
+          role-to-assume: arn:aws:iam::315040492946:role/ResourcelyGithubActionsOIDC
           role-session-name: GithubActionsCIJobSession
           aws-region: us-west-2
       
@@ -138,7 +138,7 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          role-to-assume: arn:aws:iam::619071311487:role/GithubActionsOIDCTerraformRunner
+          role-to-assume: arn:aws:iam::315040492946:role/ResourcelyGithubActionsOIDC
           role-session-name: GithubActionsCIJobSession
           aws-region: us-west-2
       
@@ -204,7 +204,7 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          role-to-assume: arn:aws:iam::619071311487:role/GithubActionsOIDCTerraformRunner
+          role-to-assume: arn:aws:iam::315040492946:role/ResourcelyGithubActionsOIDC
           role-session-name: GithubActionsCIJobSession
           aws-region: us-west-2
       
