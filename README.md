@@ -85,48 +85,50 @@ Make sure "Read and write permissions" is selected.
 
 You need to have credentials with the following access 
 {
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "iam:GetRole",
-                "iam:ListRoles",
-                "iam:PassRole"
-            ],
-            "Resource": "*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "iam:ListOpenIDConnectProviders",
-                "iam:GetOpenIDConnectProvider",
-                "iam:CreateOpenIDConnectProvider",
-                "iam:DeleteOpenIDConnectProvider",
-                "iam:UpdateOpenIDConnectProviderThumbprint",
-                "iam:CreateRole",
-                "iam:PassRole",
-                "iam:GetRole",
-                "iam:UpdateAssumeRolePolicy"
-            ],
-            "Resource": "*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "s3:ListAllMyBuckets",
-                "s3:GetBucketLocation",
-                "s3:ListBucket",
-                "s3:PutObject",
-                "s3:GetObject",
-                "s3:DeleteObject"
-            ],
-            "Resource": "*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": "sts:AssumeRole",
-            "Resource": "arn:aws:iam::315040492946:role/resourcely-tfc"
-        }
-    ]
+	"Version": "2012-10-17",
+	"Statement": [
+		{
+			"Effect": "Allow",
+			"Action": [
+				"iam:GetRole",
+				"iam:ListRoles",
+				"iam:PassRole"
+			],
+			"Resource": "*"
+		},
+		{
+			"Effect": "Allow",
+			"Action": [
+				"iam:ListOpenIDConnectProviders",
+				"iam:GetOpenIDConnectProvider",
+				"iam:CreateOpenIDConnectProvider",
+				"iam:DeleteOpenIDConnectProvider",
+				"iam:UpdateOpenIDConnectProviderThumbprint",
+				"iam:CreateRole",
+				"iam:PassRole",
+				"iam:GetRole",
+				"iam:UpdateAssumeRolePolicy"
+			],
+			"Resource": "*"
+		},
+		{
+			"Effect": "Allow",
+			"Action": [
+				"s3:ListAllMyBuckets",
+				"s3:GetBucketLocation",
+				"s3:ListBucket",
+				"s3:CreateBucket",
+				"s3:PutBucketPublicAccessBlock",
+				"s3:PutObject",
+				"s3:GetObject",
+				"s3:DeleteObject"
+			],
+			"Resource": "*"
+		},
+		{
+			"Effect": "Allow",
+			"Action": "sts:AssumeRole",
+			"Resource": "arn:aws:iam::315040492946:role/resourcely-tfc"
+		}
+	]
 }

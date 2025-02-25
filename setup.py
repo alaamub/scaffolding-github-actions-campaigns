@@ -358,9 +358,184 @@ def patch_workflow_file(new_role_arn, workflow_file=".github/workflows/plan_and_
         sys.exit(1)
 
 # --------------------------
+# S3 Bucket Functions
+# --------------------------
+def get_account_id(sts_client):
+    """
+    Retrieve the AWS account ID from the current credentials.
+    """
+    try:
+        identity = sts_client.get_caller_identity()
+        return identity["Account"]
+    except ClientError as e:
+        print("❌ Failed to retrieve AWS account ID:", e)
+        sys.exit(1)
+        
+def create_s3_bucket(s3_client, sts_client, base_bucket_name="resourcely-campaigns-terraform-state", region="us-west-2"):
+    """
+    Create the S3 bucket for Terraform state if it doesn't exist.
+    Generates a unique bucket name using the AWS account ID and region.
+    Ensures the bucket has public access blocked and waits until it's created.
+    Returns the bucket name.
+    """
+    account_id = get_account_id(sts_client)
+    # Generate a bucket name that is unique per account and region
+    bucket_name = f"{base_bucket_name}-{account_id}-{region}"
+    try:
+        s3_client.head_bucket(Bucket=bucket_name)
+        print(f"✅ S3 bucket '{bucket_name}' already exists.")
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code in ["404", "NoSuchBucket"]:
+            print(f"ℹ️ S3 bucket '{bucket_name}' does not exist, creating it...")
+            create_bucket_kwargs = {'Bucket': bucket_name}
+            # if region != "us-west-2":
+            create_bucket_kwargs['CreateBucketConfiguration'] = {'LocationConstraint': region}
+            try:
+                s3_client.create_bucket(**create_bucket_kwargs)
+                waiter = s3_client.get_waiter('bucket_exists')
+                waiter.wait(Bucket=bucket_name)
+                print(f"✅ S3 bucket '{bucket_name}' created.")
+            except ClientError as e:
+                print(f"❌ Failed to create S3 bucket '{bucket_name}':", e)
+                sys.exit(1)
+        else:
+            print(f"❌ Error checking S3 bucket '{bucket_name}':", e)
+            sys.exit(1)
+    # Apply public access block
+    try:
+        s3_client.put_public_access_block(
+            Bucket=bucket_name,
+            PublicAccessBlockConfiguration={
+                'BlockPublicAcls': True,
+                'IgnorePublicAcls': True,
+                'BlockPublicPolicy': True,
+                'RestrictPublicBuckets': True
+            }
+        )
+        print(f"✅ Public access blocked for bucket '{bucket_name}'.")
+    except ClientError as e:
+        print(f"❌ Failed to set public access block for bucket '{bucket_name}':", e)
+        sys.exit(1)
+    # bucket_arn = f"arn:aws:s3:::{bucket_name}"
+    return bucket_name
+
+def patch_terraform_file(new_bucket_value, terraform_file="terraform.tf"):
+    """
+    Patch the terraform.tf file, replacing the bucket value with the new bucket value.
+    """
+    try:
+        with open(terraform_file, "r") as f:
+            content = f.read()
+        new_content = re.sub(r'(bucket\s*=\s*")[^"]+(")', r'\1' + new_bucket_value + r'\2', content)
+        with open(terraform_file, "w") as f:
+            f.write(new_content)
+        print(f"✅ Updated {terraform_file} with new bucket: {new_bucket_value}")
+    except Exception as e:
+        print("❌ Failed to patch the terraform file:", e)
+        sys.exit(1)
+
+# --------------------------
+# S3 Bucket Permissions 
+# --------------------------
+def get_current_aws_principal(sts_client):
+    """
+    Retrieves the AWS ARN of the currently authenticated IAM user or role.
+    """
+    try:
+        identity = sts_client.get_caller_identity()
+        return identity.get("Arn")
+    except ClientError as e:
+        print("❌ Failed to retrieve AWS principal ARN:", e)
+        sys.exit(1)
+
+def apply_bucket_policy(s3_client, sts_client, bucket_name):
+    """
+    Idempotently applies a bucket policy to allow access to the bucket from the current AWS principal.
+    
+    It grants s3:GetObject, s3:PutObject, and s3:ListBucket permissions.
+    If a statement with Sid "AllowLocalDockerAccess" exists and already matches, nothing is changed.
+    Otherwise, the policy is updated (or created).
+    """
+    principal_arn = get_current_aws_principal(sts_client)
+    intended_statement = {
+        "Sid": "AllowLocalDockerAccess",
+        "Effect": "Allow",
+        "Principal": {"AWS": principal_arn},
+        "Action": [
+            "s3:GetObject",
+            "s3:PutObject",
+            "s3:ListBucket"
+        ],
+        "Resource": [
+            f"arn:aws:s3:::{bucket_name}",
+            f"arn:aws:s3:::{bucket_name}/*"
+        ]
+    }
+    
+    # Try to retrieve the current bucket policy.
+    try:
+        response = s3_client.get_bucket_policy(Bucket=bucket_name)
+        current_policy = json.loads(response['Policy'])
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchBucketPolicy':
+            current_policy = {"Version": "2012-10-17", "Statement": []}
+        else:
+            print("❌ Failed to retrieve bucket policy:", e)
+            sys.exit(1)
+    
+    # Look for an existing statement with Sid "AllowLocalDockerAccess"
+    statement_found = False
+    for stmt in current_policy["Statement"]:
+        if stmt.get("Sid") == "AllowLocalDockerAccess":
+            statement_found = True
+            # If it exactly matches our intended statement, do nothing.
+            if stmt == intended_statement:
+                print(f"✅ Bucket policy for local Docker access already applied for bucket '{bucket_name}'.")
+                return
+            else:
+                # Update the existing statement.
+                stmt.update(intended_statement)
+                break
+    if not statement_found:
+        # Append the intended statement.
+        current_policy["Statement"].append(intended_statement)
+    
+    # Apply the updated (or new) policy.
+    policy_json = json.dumps(current_policy)
+    try:
+        s3_client.put_bucket_policy(Bucket=bucket_name, Policy=policy_json)
+        print(f"✅ Bucket policy updated for bucket '{bucket_name}' to allow access from principal {principal_arn}.")
+    except ClientError as e:
+        print("❌ Failed to update bucket policy:", e)
+        sys.exit(1)
+
+# --------------------------
+# Patch .resourcely.yaml
+# --------------------------
+def patch_resourcely_yaml(new_bucket, filename=".resourcely.yaml"):
+    """
+    Patch the .resourcely.yaml file to update the S3 bucket location in the state_file_config.
+    Replaces the current bucket in the URL with the new_bucket value.
+    """
+    try:
+        with open(filename, "r") as f:
+            content = f.read()
+        # Build the new S3 path
+        new_path = f"s3://{new_bucket}/terraform.tfstate"
+        # Use regex to find and replace the S3 URL.
+        # This pattern matches any string like s3://<anything>/terraform.tfstate
+        new_content = re.sub(r"s3://[^/]+/terraform\.tfstate", new_path, content)
+        with open(filename, "w") as f:
+            f.write(new_content)
+        print(f"✅ Updated {filename} with new S3 bucket path: {new_path}")
+    except Exception as e:
+        print("❌ Failed to patch .resourcely.yaml:", e)
+        sys.exit(1)
+
+# --------------------------
 # Main Function
 # --------------------------
-
 def main():
     # GitHub Checks
     token = os.environ.get("GITHUB_TOKEN")
@@ -403,6 +578,19 @@ def main():
     
     # Patch the workflow file with the new role ARN
     patch_workflow_file(new_role_arn)
+
+     # Create S3 bucket for Terraform remote state
+    print("\n✅ Creating S3 bucket for Terraform state...\n")
+    s3_client = boto3.client('s3', aws_access_key_id=access_key, aws_secret_access_key=secret_key, region_name=region)
+    sts_client = boto3.client('sts', aws_access_key_id=access_key, aws_secret_access_key=secret_key, region_name=region)
+    default_bucket_name = "resourcely-campaigns-terraform-state"
+    new_bucket_name = create_s3_bucket(s3_client, sts_client)
+    apply_bucket_policy(s3_client, sts_client, new_bucket_name)
+
+    # Patch the terraform.tf and .resourcely.yaml file with the new bucket value.
+    # (Terraform S3 backend requires the bucket name, not the ARN)
+    patch_terraform_file(new_bucket_name)
+    patch_resourcely_yaml(new_bucket_name)
     
     print("\n🚀 Onboarding complete! Continuing with further onboarding steps...\n")
 
