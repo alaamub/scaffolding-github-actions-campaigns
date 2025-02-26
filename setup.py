@@ -711,13 +711,13 @@ def update_main_tf_directly(new_versioning_status="Enabled"):
 
 def update_main_and_push():
     """
-    Check for any changes in the repo, commit them, and push directly to main.
+    Check for any changes in main.tf, commit them, and push directly to main.
     """
     try:
         status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
         if status.stdout.strip():
             print("ℹ️ Changes detected on main. Committing and pushing...")
-            subprocess.run(["git", "add", "main.tf"], check=True)
+            subprocess.run(["git", "add", "."], check=True)
             subprocess.run(["git", "commit", "-m", "Update versioning_configuration status in main.tf"], check=True)
             subprocess.run(["git", "push", "origin", "main"], check=True)
             print("✅ Changes committed and pushed to main.")
@@ -726,12 +726,14 @@ def update_main_and_push():
     except subprocess.CalledProcessError as e:
         print("❌ Git commit/push failed:", e)
         sys.exit(1)
+    # Retrieve the commit SHA after pushing.
+    commit_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    return commit_sha
 
-def wait_for_plan_job_success(owner, repo, branch="main", github_token=None, timeout=600, poll_interval=30):
+def wait_for_plan_job_success(owner, repo, commit_sha, github_token, timeout=600, poll_interval=30):
     """
-    Poll the GitHub Actions API for the latest workflow run on the given branch.
-    Then check the "Plan Sandbox" job in that run. Wait until that job
-    completes successfully.
+    Poll the GitHub Actions API for the workflow run on the given branch that matches the commit_sha.
+    Then, check the "Plan Sandbox" job in that run and wait until that job completes successfully.
     """
     headers = {
         "Authorization": f"token {github_token}",
@@ -739,15 +741,17 @@ def wait_for_plan_job_success(owner, repo, branch="main", github_token=None, tim
     }
     runs_url = f"https://api.github.com/repos/{owner}/{repo}/actions/runs"
     start_time = time.time()
-    print(f"ℹ️ Waiting for 'Plan Sandbox' job on branch '{branch}'...")
+    print(f"ℹ️ Waiting for 'Plan Sandbox' job for commit {commit_sha}...")
     while time.time() - start_time < timeout:
-        params = {"branch": branch, "event": "push"}
+        # Get workflow runs, then filter by head_sha
+        params = {"head_sha": commit_sha, "event": "push"}
         response = requests.get(runs_url, headers=headers, params=params)
         if response.status_code != 200:
             print("❌ Failed to retrieve workflow runs:", response.json())
             sys.exit(1)
         runs = response.json().get("workflow_runs", [])
         if runs:
+            # Assuming the most recent run is the one for our commit
             latest_run = runs[0]
             run_id = latest_run.get("id")
             # Now get the jobs for this run
@@ -758,22 +762,21 @@ def wait_for_plan_job_success(owner, repo, branch="main", github_token=None, tim
                 sys.exit(1)
             jobs = jobs_response.json().get("jobs", [])
             for job in jobs:
-                print(job)
                 if job.get("name") == "plan_and_apply / plan-and-apply-app-dev-us-west-2 / Plan Sandbox":
                     job_status = job.get("status")
                     job_conclusion = job.get("conclusion")
                     print(f"ℹ️ 'Plan Sandbox' job: status = {job_status}, conclusion = {job_conclusion}")
                     if job_status == "completed" and job_conclusion == "success":
-                        print("✅ 'Plan Sandbox' job succeeded.")
+                        print("✅ 'Plan Sandbox' job succeeded for commit", commit_sha)
                         return
                     elif job_status == "completed" and job_conclusion != "success":
                         print(f"❌ 'Plan Sandbox' job failed with conclusion: {job_conclusion}")
                         sys.exit(1)
-            print("ℹ️ 'Plan Sandbox' job not found yet.")
+            print("ℹ️ 'Plan Sandbox' job not found yet for this commit.")
         else:
-            print(f"ℹ️ No workflow run found on branch '{branch}'.")
+            print(f"ℹ️ No workflow run found for commit {commit_sha}.")
         time.sleep(poll_interval)
-    print("❌ Timeout waiting for 'Plan Sandbox' job to complete successfully.")
+    print("❌ Timeout waiting for 'Plan Sandbox' job to complete successfully for commit", commit_sha)
     sys.exit(1)
 
 # --------------------------
@@ -840,12 +843,12 @@ def main():
 
     # Now commit and push the changes and enable workflows
     update_main_tf_directly(new_versioning_status="Enabled")
-    git_commit_and_push()
+    commit_sha = update_main_and_push()
     enable_workflows(owner, repo, token)
 
     # Create (or update) the branch and update main.tf
     
-    wait_for_plan_job_success(owner, repo, branch="main", github_token=token)
+    wait_for_plan_job_success(owner, repo, commit_sha, token)
     
     print("\n🚀 Onboarding complete! Continuing with further onboarding steps...\n")
 
