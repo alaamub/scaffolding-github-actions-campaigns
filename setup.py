@@ -630,6 +630,7 @@ def enable_workflows(owner, repo, github_token):
                 print(f"✅ Enabled workflow '{workflow.get('name')}' (ID: {workflow_id}).")
             else:
                 print(f"❌ Failed to enable workflow '{workflow.get('name')}':", enable_response.json())
+                print(f"❌ You can enable Workflows manually by navigating to this repo URL https://github.com/{owner}/{repo}/actions")
                 sys.exit(1)
         else:
             print(f"✅ Workflow '{workflow.get('name')}' is already enabled.")
