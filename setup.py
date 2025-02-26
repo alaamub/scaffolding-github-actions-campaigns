@@ -636,6 +636,124 @@ def enable_workflows(owner, repo, github_token):
             print(f"✅ Workflow '{workflow.get('name')}' is already enabled.")
 
 # --------------------------
+# Check if plan workflows work
+# --------------------------
+def create_or_update_branch_and_main_tf(new_value="false"):
+    """
+    Create or reuse a fixed branch for onboarding (idempotent).
+    Update main.tf to set restrict_public_buckets = new_value.
+    Commit and push if changes occur.
+    Returns the branch name.
+    """
+    branch_name = "onboarding-update-restrict-public-buckets"
+    
+    # Check if branch exists locally
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", branch_name],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    if result.returncode != 0:
+        # Branch doesn't exist, create it from main
+        try:
+            subprocess.run(["git", "checkout", "-b", branch_name, "main"], check=True)
+            print(f"✅ Created and checked out new branch '{branch_name}' from main.")
+        except subprocess.CalledProcessError as e:
+            print("❌ Failed to create new branch:", e)
+            sys.exit(1)
+    else:
+        # Branch exists; checkout it
+        try:
+            subprocess.run(["git", "checkout", branch_name], check=True)
+            print(f"✅ Checked out existing branch '{branch_name}'.")
+        except subprocess.CalledProcessError as e:
+            print("❌ Failed to checkout branch:", e)
+            sys.exit(1)
+    
+    # Update main.tf file with new_value for restrict_public_buckets
+    try:
+        with open("main.tf", "r") as f:
+            content = f.read()
+        # Regex: look for "restrict_public_buckets = true" or "false" and replace with the new value.
+        new_content, count = re.subn(
+            r'(restrict_public_buckets\s*=\s*)(true|false)',
+            r'\1' + new_value,
+            content
+        )
+        if count > 0:
+            with open("main.tf", "w") as f:
+                f.write(new_content)
+            print(f"✅ Updated main.tf: set restrict_public_buckets = {new_value}")
+        else:
+            print("ℹ️ main.tf already has the desired value; no update needed.")
+    except Exception as e:
+        print("❌ Failed to update main.tf:", e)
+        sys.exit(1)
+    
+    # Commit and push if there are changes
+    try:
+        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+        if status.stdout.strip():
+            subprocess.run(["git", "add", "main.tf"], check=True)
+            subprocess.run(["git", "commit", "-m", "Update restrict_public_buckets in main.tf"], check=True)
+            subprocess.run(["git", "push", "origin", branch_name], check=True)
+            print(f"✅ Changes committed and pushed on branch '{branch_name}'.")
+        else:
+            print("ℹ️ No changes to commit on branch.")
+    except subprocess.CalledProcessError as e:
+        print("❌ Git commit/push failed:", e)
+        sys.exit(1)
+    
+    return branch_name
+
+def wait_for_workflow_run_and_switch_back(owner, repo, branch, github_token, timeout=600, poll_interval=30):
+    """
+    Poll the GitHub Actions API for a workflow run on the given branch.
+    Wait until the run completes successfully.
+    Once successful, switch back to the main branch.
+    """
+    headers = {
+        "Authorization": f"token {github_token}",
+        "Accept": "application/vnd.github+json"
+    }
+    url = f"https://api.github.com/repos/{owner}/{repo}/actions/runs"
+    start_time = time.time()
+    print(f"ℹ️ Waiting for workflow run on branch '{branch}'...")
+    while time.time() - start_time < timeout:
+        params = {"branch": branch, "event": "push"}
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code != 200:
+            print("❌ Failed to retrieve workflow runs:", response.json())
+            sys.exit(1)
+        runs = response.json().get("workflow_runs", [])
+        if runs:
+            latest_run = runs[0]
+            status = latest_run.get("status")
+            conclusion = latest_run.get("conclusion")
+            print(f"ℹ️ Latest run: status = {status}, conclusion = {conclusion}")
+            if status == "completed":
+                if conclusion == "success":
+                    print("✅ Workflow run succeeded.")
+                    break
+                else:
+                    print("❌ Workflow run failed with conclusion:", conclusion)
+                    sys.exit(1)
+        else:
+            print(f"ℹ️ No workflow run found on branch '{branch}'.")
+        time.sleep(poll_interval)
+    else:
+        print("❌ Timeout waiting for workflow run to complete.")
+        sys.exit(1)
+    
+    # Switch back to main branch
+    try:
+        subprocess.run(["git", "checkout", "main"], check=True)
+        print("✅ Switched back to main branch.")
+    except subprocess.CalledProcessError as e:
+        print("❌ Failed to switch back to main branch:", e)
+        sys.exit(1)
+
+# --------------------------
 # Main Function
 # --------------------------
 def main():
@@ -699,6 +817,10 @@ def main():
     # Now commit and push the changes and enable workflows
     git_commit_and_push()
     enable_workflows(owner, repo, token)
+
+    # Create (or update) the branch and update main.tf
+    branch = create_or_update_branch_and_main_tf(new_value="false")
+    wait_for_workflow_run_and_switch_back(owner, repo, branch, token)
     
     print("\n🚀 Onboarding complete! Continuing with further onboarding steps...\n")
 
