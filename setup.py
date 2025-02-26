@@ -727,41 +727,52 @@ def update_main_and_push():
         print("❌ Git commit/push failed:", e)
         sys.exit(1)
 
-def wait_for_workflow_run(owner, repo, branch="main", github_token=None, timeout=600, poll_interval=30):
+def wait_for_plan_job_success(owner, repo, branch="main", github_token=None, timeout=600, poll_interval=30):
     """
-    Poll the GitHub Actions API for a workflow run on the given branch (default: main).
-    Wait until the run is completed successfully.
+    Poll the GitHub Actions API for the latest workflow run on the given branch.
+    Then check the "Plan Sandbox" job in that run. Wait until that job
+    completes successfully.
     """
     headers = {
         "Authorization": f"token {github_token}",
         "Accept": "application/vnd.github+json"
     }
-    url = f"https://api.github.com/repos/{owner}/{repo}/actions/runs"
+    runs_url = f"https://api.github.com/repos/{owner}/{repo}/actions/runs"
     start_time = time.time()
-    print(f"ℹ️ Waiting for workflow run on branch '{branch}'...")
+    print(f"ℹ️ Waiting for 'Plan Sandbox' job on branch '{branch}'...")
     while time.time() - start_time < timeout:
         params = {"branch": branch, "event": "push"}
-        response = requests.get(url, headers=headers, params=params)
+        response = requests.get(runs_url, headers=headers, params=params)
         if response.status_code != 200:
             print("❌ Failed to retrieve workflow runs:", response.json())
             sys.exit(1)
         runs = response.json().get("workflow_runs", [])
         if runs:
             latest_run = runs[0]
-            status = latest_run.get("status")
-            conclusion = latest_run.get("conclusion")
-            print(f"ℹ️ Latest run: status = {status}, conclusion = {conclusion}")
-            if status == "completed":
-                if conclusion == "success":
-                    print("✅ Workflow run succeeded.")
-                    return
-                else:
-                    print("❌ Workflow run failed with conclusion:", conclusion)
-                    sys.exit(1)
+            run_id = latest_run.get("id")
+            # Now get the jobs for this run
+            jobs_url = f"https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/jobs"
+            jobs_response = requests.get(jobs_url, headers=headers)
+            if jobs_response.status_code != 200:
+                print("❌ Failed to retrieve jobs for workflow run:", jobs_response.json())
+                sys.exit(1)
+            jobs = jobs_response.json().get("jobs", [])
+            for job in jobs:
+                if job.get("name") == "Plan Sandbox":
+                    job_status = job.get("status")
+                    job_conclusion = job.get("conclusion")
+                    print(f"ℹ️ 'Plan Sandbox' job: status = {job_status}, conclusion = {job_conclusion}")
+                    if job_status == "completed" and job_conclusion == "success":
+                        print("✅ 'Plan Sandbox' job succeeded.")
+                        return
+                    elif job_status == "completed" and job_conclusion != "success":
+                        print(f"❌ 'Plan Sandbox' job failed with conclusion: {job_conclusion}")
+                        sys.exit(1)
+            print("ℹ️ 'Plan Sandbox' job not found yet.")
         else:
-            print("ℹ️ No workflow run found on branch 'main'.")
+            print(f"ℹ️ No workflow run found on branch '{branch}'.")
         time.sleep(poll_interval)
-    print("❌ Timeout waiting for workflow run to complete.")
+    print("❌ Timeout waiting for 'Plan Sandbox' job to complete successfully.")
     sys.exit(1)
 
 # --------------------------
@@ -833,7 +844,7 @@ def main():
 
     # Create (or update) the branch and update main.tf
     
-    wait_for_workflow_run(owner, repo, branch="main", github_token=token)
+    wait_for_plan_job_success(owner, repo, branch="main", github_token=token)
     
     print("\n🚀 Onboarding complete! Continuing with further onboarding steps...\n")
 
