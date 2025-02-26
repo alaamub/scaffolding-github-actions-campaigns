@@ -820,6 +820,97 @@ def check_change_management_setup(resourcely_api_token):
         sys.exit(1)
 
 # --------------------------
+# Polls the diagnostics endpoint to validate .resourcely.yaml
+# --------------------------
+def poll_yaml_config_diagnostics(api_token, repo_url, max_attempts=5, interval=5):
+    """
+    Polls the diagnostics endpoint to ensure that the .resourcely.yaml configuration is valid.
+    
+    It calls GET https://api.dev.resourcely.io/api/v1/diagnostics/yaml-config using the provided
+    RESOURCELY_API_TOKEN. It then checks that for repo_url, the "result" is "TF_CONFIG_SCAN_RESULT_VALID_CONFIG"
+    and that the "errors" array is empty.
+    
+    If these conditions are met, it prints a success message and returns.
+    Otherwise, it waits 'interval' seconds and retries up to max_attempts times before exiting.
+    """
+    url = "https://api.dev.resourcely.io/api/v1/diagnostics/yaml-config"
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Accept": "application/json"
+    }
+    attempt = 0
+    while attempt < max_attempts:
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            print(f"❌ Failed to retrieve YAML config diagnostics (status code {response.status_code}): {response.text}")
+        else:
+            fqdn_repo_url = f"https://github.com/{repo_url}"
+            data = response.json()
+            repos = data.get("repos", {})
+            repo_diag = repos.get(fqdn_repo_url)
+            if repo_diag:
+                result = repo_diag.get("result")
+                errors = repo_diag.get("errors", [])
+                if result == "TF_CONFIG_SCAN_RESULT_VALID_CONFIG" and not errors:
+                    print("✅ YAML configuration diagnostics are valid for the repository.")
+                    return
+                else:
+                    print(f"ℹ️ Diagnostics for '{repo_url}' not valid yet: result = {result}, errors = {errors}")
+            else:
+                print(f"ℹ️ Repository '{repo_url}' not found in diagnostics response.")
+        attempt += 1
+        if attempt < max_attempts:
+            print(f"ℹ️ Waiting {interval} seconds before retrying... (attempt {attempt+1}/{max_attempts})")
+            time.sleep(interval)
+    print("❌ Timeout: YAML configuration diagnostics did not become valid after maximum attempts.")
+    sys.exit(1)
+
+# --------------------------
+# Polls the diagnostics endpoint to verify github or gitlab installation is successful 
+# --------------------------
+def poll_diagnostics(api_token, max_attempts=5, interval=5):
+    """
+    Polls the diagnostics endpoint to confirm that either DIAGNOSTIC_SOURCE_GITLAB or 
+    DIAGNOSTIC_SOURCE_GITHUB has all its checks with DIAGNOSTIC_STATUS_SUCCESS.
+    
+    If found, prints success and returns. Otherwise, it retries up to max_attempts times
+    before exiting.
+    """
+    url = "https://api.dev.resourcely.io/api/v1/diagnostics"
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Accept": "application/json"
+    }
+    attempt = 0
+    while attempt < max_attempts:
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            print(f"❌ Failed to retrieve diagnostics (status code {response.status_code}): {response.text}")
+        else:
+            data = response.json()
+            diagnostics = data.get("diagnostics", [])
+            success_found = False
+            for diagnostic in diagnostics:
+                source = diagnostic.get("source", "")
+                if source in ["DIAGNOSTIC_SOURCE_GITLAB", "DIAGNOSTIC_SOURCE_GITHUB"]:
+                    checks = diagnostic.get("checks", [])
+                    # Verify that all checks for this diagnostic have a status of DIAGNOSTIC_STATUS_SUCCESS
+                    if all(check.get("status") == "DIAGNOSTIC_STATUS_SUCCESS" for check in checks):
+                        print(f"✅ Diagnostics for source {source} are all successful.")
+                        success_found = True
+                        break
+                    else:
+                        print(f"ℹ️ Diagnostics for source {source} are not fully successful yet.")
+            if success_found:
+                return
+        attempt += 1
+        if attempt < max_attempts:
+            print(f"ℹ️ Retrying diagnostics check in {interval} seconds... (attempt {attempt+1}/{max_attempts})")
+            time.sleep(interval)
+    print("❌ Timeout: GitHub diagnostics did not reach success status after maximum attempts.")
+    sys.exit(1)
+
+# --------------------------
 # Main Function
 # --------------------------
 def main():
@@ -885,10 +976,16 @@ def main():
     update_main_tf_directly(new_versioning_status="Enabled")
     commit_sha = update_main_and_push()
     enable_workflows(owner, repo, token)
-
-    # Create (or update) the branch and update main.tf
-    
     wait_for_plan_job_success(owner, repo, commit_sha, token)
+    
+    # check if change management was setup in the account.
+    check_change_management_setup(resourcely_api_token)
+
+    # check if .resourcely.yaml was setup in the account.
+    poll_yaml_config_diagnostics(resourcely_api_token, repository, max_attempts=5, interval=5)
+    
+    # check if vcs was setup in the account.
+    poll_diagnostics(resourcely_api_token, max_attempts=5, interval=5)
     
     print("\n🚀 Onboarding complete! Continuing with further onboarding steps...\n")
 
