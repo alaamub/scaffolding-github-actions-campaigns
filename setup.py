@@ -10,6 +10,7 @@ import getpass
 import base64
 import json
 import time
+from nacl import encoding, public
 
 # --------------------------
 # GitHub Functions
@@ -534,6 +535,106 @@ def patch_resourcely_yaml(new_bucket, filename=".resourcely.yaml"):
         sys.exit(1)
 
 # --------------------------
+# Add RESOURCELY_API_TOKEN to Github Actions 
+# --------------------------
+def encrypt_secret(public_key: str, secret_value: str) -> str:
+    """
+    Encrypts a secret using the provided public key from GitHub.
+    """
+    public_key_obj = public.PublicKey(public_key.encode("utf-8"), encoding.Base64Encoder())
+    sealed_box = public.SealedBox(public_key_obj)
+    encrypted = sealed_box.encrypt(secret_value.encode("utf-8"))
+    return encoding.Base64Encoder().encode(encrypted).decode("utf-8")
+
+def update_github_secret(owner, repo, github_token, secret_name, secret_value):
+    """
+    Retrieves the public key for the repository, encrypts the secret value,
+    and then creates/updates the secret in the repository via the GitHub API.
+    """
+    # Retrieve the public key
+    url = f"https://api.github.com/repos/{owner}/{repo}/actions/secrets/public-key"
+    headers = {
+        "Authorization": f"token {github_token}",
+        "Accept": "application/vnd.github+json"
+    }
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        print("❌ Failed to retrieve public key for repository secrets:", response.json())
+        sys.exit(1)
+    public_key_data = response.json()
+    public_key = public_key_data["key"]
+    key_id = public_key_data["key_id"]
+
+    # Encrypt the secret using the public key
+    encrypted_value = encrypt_secret(public_key, secret_value)
+
+    # Create or update the secret using PUT
+    put_url = f"https://api.github.com/repos/{owner}/{repo}/actions/secrets/{secret_name}"
+    payload = {
+        "encrypted_value": encrypted_value,
+        "key_id": key_id
+    }
+    put_response = requests.put(put_url, headers=headers, json=payload)
+    if put_response.status_code in [201, 204]:
+        print(f"✅ Secret '{secret_name}' updated successfully.")
+    else:
+        print("❌ Failed to update secret:", put_response.json())
+        sys.exit(1)
+
+# --------------------------
+# Commit changes to the repo and enable workflows
+# --------------------------
+def git_commit_and_push():
+    """
+    Check for any changes, commit them, and push to the main branch.
+    """
+    try:
+        # Check for any changed files
+        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+        if status.stdout.strip():
+            print("ℹ️ Changes detected. Committing and pushing...")
+            subprocess.run(["git", "add", "."], check=True)
+            subprocess.run(["git", "commit", "-m", "Automated onboarding updates"], check=True)
+            subprocess.run(["git", "push", "origin", "main"], check=True)
+            print("✅ Changes committed and pushed to main.")
+        else:
+            print("ℹ️ No changes to commit.")
+    except subprocess.CalledProcessError as e:
+        print("❌ Git commit/push failed:", e)
+        sys.exit(1)
+
+def enable_workflows(owner, repo, github_token):
+    """
+    Enable all workflows for the repository using the GitHub API.
+    For each workflow, if its state is not 'active', send a PUT request to enable it.
+    """
+    workflows_url = f"https://api.github.com/repos/{owner}/{repo}/actions/workflows"
+    headers = {
+        "Authorization": f"token {github_token}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    response = requests.get(workflows_url, headers=headers)
+    if response.status_code != 200:
+        print("❌ Failed to retrieve workflows:", response.json())
+        sys.exit(1)
+    workflows = response.json().get("workflows", [])
+    if not workflows:
+        print("ℹ️ No workflows found in the repository.")
+    for workflow in workflows:
+        # If the workflow state is not active (i.e. disabled), enable it.
+        if workflow.get("state") != "active":
+            workflow_id = workflow.get("id")
+            enable_url = f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/{workflow_id}/enable"
+            enable_response = requests.put(enable_url, headers=headers)
+            if enable_response.status_code == 204:
+                print(f"✅ Enabled workflow '{workflow.get('name')}' (ID: {workflow_id}).")
+            else:
+                print(f"❌ Failed to enable workflow '{workflow.get('name')}':", enable_response.json())
+                sys.exit(1)
+        else:
+            print(f"✅ Workflow '{workflow.get('name')}' is already enabled.")
+
+# --------------------------
 # Main Function
 # --------------------------
 def main():
@@ -557,9 +658,9 @@ def main():
     
     print("\n✅ AWS checks passed! Now checking RESOURCELY_API_TOKEN...\n")
     # RESOURCELY_API_TOKEN Checks
-    resourcely_token = get_resourcely_api_token()
-    check_resourcely_api_token(resourcely_token)
-    verify_resourcely_api_token(resourcely_token)
+    resourcely_api_token = get_resourcely_api_token()
+    check_resourcely_api_token(resourcely_api_token)
+    verify_resourcely_api_token(resourcely_api_token)
     
     print("\n✅ All basic checks passed! Now creating IAM role for GitHub Actions OIDC...\n")
     # Onboarding Step: Create OIDC provider and IAM role for GitHub Actions
@@ -583,7 +684,6 @@ def main():
     print("\n✅ Creating S3 bucket for Terraform state...\n")
     s3_client = boto3.client('s3', aws_access_key_id=access_key, aws_secret_access_key=secret_key, region_name=region)
     sts_client = boto3.client('sts', aws_access_key_id=access_key, aws_secret_access_key=secret_key, region_name=region)
-    default_bucket_name = "resourcely-campaigns-terraform-state"
     new_bucket_name = create_s3_bucket(s3_client, sts_client)
     apply_bucket_policy(s3_client, sts_client, new_bucket_name)
 
@@ -591,6 +691,13 @@ def main():
     # (Terraform S3 backend requires the bucket name, not the ARN)
     patch_terraform_file(new_bucket_name)
     patch_resourcely_yaml(new_bucket_name)
+
+    # Add RESOURCELY_API_TOKEN to github actions secrets 
+    update_github_secret(owner, repo, token, "RESOURCELY_API_TOKEN", resourcely_api_token)
+
+    # Now commit and push the changes and enable workflows
+    git_commit_and_push()
+    enable_workflows(owner, repo, token)
     
     print("\n🚀 Onboarding complete! Continuing with further onboarding steps...\n")
 

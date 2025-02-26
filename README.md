@@ -119,6 +119,8 @@ You need to have credentials with the following access
 				"s3:ListBucket",
 				"s3:CreateBucket",
 				"s3:PutBucketPublicAccessBlock",
+				"s3:GetBucketPolicy",
+				"s3:PutBucketPolicy",
 				"s3:PutObject",
 				"s3:GetObject",
 				"s3:DeleteObject"
@@ -132,3 +134,6 @@ You need to have credentials with the following access
 		}
 	]
 }
+
+### Python Packages 
+pip install PyNaCl boto3 requests
