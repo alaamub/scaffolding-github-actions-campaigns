@@ -780,6 +780,46 @@ def wait_for_plan_job_success(owner, repo, commit_sha, github_token, timeout=600
     sys.exit(1)
 
 # --------------------------
+# Check change management setup 
+# --------------------------
+def check_change_management_setup(resourcely_api_token):
+    """
+    Check if change management is configured by calling:
+      GET https://api.dev.resourcely.io/api/v1/settings/git-servers
+    It verifies that at least one git server in the response has a non-empty 
+    repo_glob_patterns array. If not, it instructs the user to configure change management.
+    """
+    url = "https://api.dev.resourcely.io/api/v1/settings/git-servers"
+    headers = {
+        "Authorization": f"Bearer {resourcely_api_token}",
+        "Accept": "application/json"
+    }
+    try:
+        response = requests.get(url, headers=headers)
+    except Exception as e:
+        print("❌ Error calling change management API:", e)
+        sys.exit(1)
+    if response.status_code != 200:
+        print(f"❌ Failed to retrieve git servers. Status code: {response.status_code}")
+        sys.exit(1)
+    data = response.json()
+    git_servers = data.get("git_servers", [])
+    configured = False
+    for server in git_servers:
+        repo_glob_patterns = server.get("repo_glob_patterns", [])
+        if repo_glob_patterns and len(repo_glob_patterns) > 0:
+            configured = True
+            break
+    if configured:
+        print("✅ Change management is configured properly.")
+    else:
+        print("❌ Change management is not configured correctly.")
+        print("Please configure change management at:")
+        print("https://portal.dev.resourcely.io/settings/change-management")
+        print("Then run the script again.")
+        sys.exit(1)
+
+# --------------------------
 # Main Function
 # --------------------------
 def main():
