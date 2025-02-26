@@ -511,6 +511,45 @@ def apply_bucket_policy(s3_client, sts_client, bucket_name):
         print("❌ Failed to update bucket policy:", e)
         sys.exit(1)
 
+def attach_s3_policy_to_role(iam_client, role_name, bucket_name):
+    """
+    Attaches an inline policy to the specified IAM role to allow access to the given S3 bucket for Terraform state.
+    Grants s3:ListBucket on the bucket and s3:GetObject, s3:PutObject, s3:DeleteObject on its objects.
+    This operation is idempotent; running it repeatedly will update the policy.
+    """
+    policy_document = {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "AllowS3ListBucket",
+                "Effect": "Allow",
+                "Action": "s3:ListBucket",
+                "Resource": f"arn:aws:s3:::{bucket_name}"
+            },
+            {
+                "Sid": "AllowS3ObjectAccess",
+                "Effect": "Allow",
+                "Action": [
+                    "s3:GetObject",
+                    "s3:PutObject",
+                    "s3:DeleteObject"
+                ],
+                "Resource": f"arn:aws:s3:::{bucket_name}/*"
+            }
+        ]
+    }
+    policy_name = "TerraformStateS3AccessPolicy"
+    try:
+        iam_client.put_role_policy(
+            RoleName=role_name,
+            PolicyName=policy_name,
+            PolicyDocument=json.dumps(policy_document)
+        )
+        print(f"✅ Attached S3 policy '{policy_name}' to role '{role_name}'.")
+    except ClientError as e:
+        print("❌ Failed to attach S3 policy to role:", e)
+        sys.exit(1)
+
 # --------------------------
 # Patch .resourcely.yaml
 # --------------------------
@@ -638,7 +677,7 @@ def enable_workflows(owner, repo, github_token):
 # --------------------------
 # Check if plan workflows work
 # --------------------------
-def create_or_update_branch_and_main_tf(new_value="false"):
+def create_or_update_branch_and_main_tf(new_value="Enabled"):
     """
     Create or reuse a fixed branch for onboarding (idempotent).
     Update main.tf to set restrict_public_buckets = new_value.
@@ -674,16 +713,16 @@ def create_or_update_branch_and_main_tf(new_value="false"):
     try:
         with open("main.tf", "r") as f:
             content = f.read()
-        # Regex: look for "restrict_public_buckets = true" or "false" and replace with the new value.
+        # Regex: look for "versioning_configuration status" and replace with the new value.
         new_content, count = re.subn(
-            r'(restrict_public_buckets\s*=\s*)(true|false)',
-            r'\1' + new_value,
+            r'(versioning_configuration\s*{\s*status\s*=\s*")Disabled(")',
+            r'\1Enabled\2',
             content
         )
         if count > 0:
             with open("main.tf", "w") as f:
                 f.write(new_content)
-            print(f"✅ Updated main.tf: set restrict_public_buckets = {new_value}")
+            print(f"✅ Updated main.tf: set versioning_configuration status = {new_value}")
         else:
             print("ℹ️ main.tf already has the desired value; no update needed.")
     except Exception as e:
@@ -805,6 +844,7 @@ def main():
     sts_client = boto3.client('sts', aws_access_key_id=access_key, aws_secret_access_key=secret_key, region_name=region)
     new_bucket_name = create_s3_bucket(s3_client, sts_client)
     apply_bucket_policy(s3_client, sts_client, new_bucket_name)
+    attach_s3_policy_to_role(iam_client, "GithubActionsOIDC", new_bucket_name)
 
     # Patch the terraform.tf and .resourcely.yaml file with the new bucket value.
     # (Terraform S3 backend requires the bucket name, not the ARN)

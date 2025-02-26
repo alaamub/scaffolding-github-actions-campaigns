@@ -105,6 +105,7 @@ You need to have credentials with the following access
 				"iam:DeleteOpenIDConnectProvider",
 				"iam:UpdateOpenIDConnectProviderThumbprint",
 				"iam:CreateRole",
+				"iam:PutRolePolicy",
 				"iam:PassRole",
 				"iam:GetRole",
 				"iam:UpdateAssumeRolePolicy"
