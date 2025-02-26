@@ -677,79 +677,60 @@ def enable_workflows(owner, repo, github_token):
 # --------------------------
 # Check if plan workflows work
 # --------------------------
-def create_or_update_branch_and_main_tf(new_value="Enabled"):
+def update_main_tf_directly(new_versioning_status="Enabled"):
     """
-    Create or reuse a fixed branch for onboarding (idempotent).
-    Update main.tf to set restrict_public_buckets = new_value.
-    Commit and push if changes occur.
-    Returns the branch name.
+    Update main.tf to set the versioning_configuration status.
+    Replace:
+      versioning_configuration {
+        status = "Disabled"
+      }
+    with:
+      versioning_configuration {
+        status = "Enabled"
+      }
+    This function is idempotent; if the file already has the desired value, no change is made.
     """
-    branch_name = "onboarding-update-restrict-public-buckets"
-    
-    # Check if branch exists locally
-    result = subprocess.run(
-        ["git", "rev-parse", "--verify", branch_name],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
-    )
-    if result.returncode != 0:
-        # Branch doesn't exist, create it from main
-        try:
-            subprocess.run(["git", "checkout", "-b", branch_name, "main"], check=True)
-            print(f"✅ Created and checked out new branch '{branch_name}' from main.")
-        except subprocess.CalledProcessError as e:
-            print("❌ Failed to create new branch:", e)
-            sys.exit(1)
-    else:
-        # Branch exists; checkout it
-        try:
-            subprocess.run(["git", "checkout", branch_name], check=True)
-            print(f"✅ Checked out existing branch '{branch_name}'.")
-        except subprocess.CalledProcessError as e:
-            print("❌ Failed to checkout branch:", e)
-            sys.exit(1)
-    
-    # Update main.tf file with new_value for restrict_public_buckets
     try:
         with open("main.tf", "r") as f:
             content = f.read()
-        # Regex: look for "versioning_configuration status" and replace with the new value.
+        # Replace the versioning configuration block from "Disabled" to new_versioning_status.
         new_content, count = re.subn(
             r'(versioning_configuration\s*{\s*status\s*=\s*")Disabled(")',
-            r'\1Enabled\2',
+            r'\1' + new_versioning_status + r'\2',
             content
         )
         if count > 0:
             with open("main.tf", "w") as f:
                 f.write(new_content)
-            print(f"✅ Updated main.tf: set versioning_configuration status = {new_value}")
+            print(f"✅ Updated main.tf: set versioning_configuration status = {new_versioning_status}")
         else:
-            print("ℹ️ main.tf already has the desired value; no update needed.")
+            print("ℹ️ main.tf already has the desired versioning status; no update needed.")
     except Exception as e:
         print("❌ Failed to update main.tf:", e)
         sys.exit(1)
-    
-    # Commit and push if there are changes
+
+def update_main_and_push():
+    """
+    Check for any changes in the repo, commit them, and push directly to main.
+    """
     try:
         status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
         if status.stdout.strip():
+            print("ℹ️ Changes detected on main. Committing and pushing...")
             subprocess.run(["git", "add", "main.tf"], check=True)
-            subprocess.run(["git", "commit", "-m", "Update restrict_public_buckets in main.tf"], check=True)
-            subprocess.run(["git", "push", "origin", branch_name], check=True)
-            print(f"✅ Changes committed and pushed on branch '{branch_name}'.")
+            subprocess.run(["git", "commit", "-m", "Update versioning_configuration status in main.tf"], check=True)
+            subprocess.run(["git", "push", "origin", "main"], check=True)
+            print("✅ Changes committed and pushed to main.")
         else:
-            print("ℹ️ No changes to commit on branch.")
+            print("ℹ️ No changes to commit on main.")
     except subprocess.CalledProcessError as e:
         print("❌ Git commit/push failed:", e)
         sys.exit(1)
-    
-    return branch_name
 
-def wait_for_workflow_run_and_switch_back(owner, repo, branch, github_token, timeout=600, poll_interval=30):
+def wait_for_workflow_run(owner, repo, branch="main", github_token=None, timeout=600, poll_interval=30):
     """
-    Poll the GitHub Actions API for a workflow run on the given branch.
-    Wait until the run completes successfully.
-    Once successful, switch back to the main branch.
+    Poll the GitHub Actions API for a workflow run on the given branch (default: main).
+    Wait until the run is completed successfully.
     """
     headers = {
         "Authorization": f"token {github_token}",
@@ -773,24 +754,15 @@ def wait_for_workflow_run_and_switch_back(owner, repo, branch, github_token, tim
             if status == "completed":
                 if conclusion == "success":
                     print("✅ Workflow run succeeded.")
-                    break
+                    return
                 else:
                     print("❌ Workflow run failed with conclusion:", conclusion)
                     sys.exit(1)
         else:
-            print(f"ℹ️ No workflow run found on branch '{branch}'.")
+            print("ℹ️ No workflow run found on branch 'main'.")
         time.sleep(poll_interval)
-    else:
-        print("❌ Timeout waiting for workflow run to complete.")
-        sys.exit(1)
-    
-    # Switch back to main branch
-    try:
-        subprocess.run(["git", "checkout", "main"], check=True)
-        print("✅ Switched back to main branch.")
-    except subprocess.CalledProcessError as e:
-        print("❌ Failed to switch back to main branch:", e)
-        sys.exit(1)
+    print("❌ Timeout waiting for workflow run to complete.")
+    sys.exit(1)
 
 # --------------------------
 # Main Function
@@ -844,7 +816,7 @@ def main():
     sts_client = boto3.client('sts', aws_access_key_id=access_key, aws_secret_access_key=secret_key, region_name=region)
     new_bucket_name = create_s3_bucket(s3_client, sts_client)
     apply_bucket_policy(s3_client, sts_client, new_bucket_name)
-    attach_s3_policy_to_role(iam_client, "GithubActionsOIDC", new_bucket_name)
+    attach_s3_policy_to_role(iam_client, "ResourcelyGithubActionsOIDC", new_bucket_name)
 
     # Patch the terraform.tf and .resourcely.yaml file with the new bucket value.
     # (Terraform S3 backend requires the bucket name, not the ARN)
@@ -855,12 +827,13 @@ def main():
     update_github_secret(owner, repo, token, "RESOURCELY_API_TOKEN", resourcely_api_token)
 
     # Now commit and push the changes and enable workflows
+    update_main_tf_directly(new_versioning_status="Enabled")
     git_commit_and_push()
     enable_workflows(owner, repo, token)
 
     # Create (or update) the branch and update main.tf
-    branch = create_or_update_branch_and_main_tf(new_value="false")
-    wait_for_workflow_run_and_switch_back(owner, repo, branch, token)
+    
+    wait_for_workflow_run(owner, repo, branch="main", github_token=token)
     
     print("\n🚀 Onboarding complete! Continuing with further onboarding steps...\n")
 

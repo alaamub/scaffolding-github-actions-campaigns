@@ -24,6 +24,6 @@ resource "aws_s3_bucket_versioning" "campaigns-resource_ckaMshbmm94dxCHA" {
   bucket = aws_s3_bucket.campaigns-resource_ckaMshbmm94dxCHA.id
 
   versioning_configuration {
-    status = "Disabled"
+    status = "Enabled"
   }
 }
