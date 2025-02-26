@@ -758,6 +758,7 @@ def wait_for_plan_job_success(owner, repo, branch="main", github_token=None, tim
                 sys.exit(1)
             jobs = jobs_response.json().get("jobs", [])
             for job in jobs:
+                print(job)
                 if job.get("name") == "Plan Sandbox":
                     job_status = job.get("status")
                     job_conclusion = job.get("conclusion")
