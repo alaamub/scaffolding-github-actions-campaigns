@@ -99,6 +99,19 @@ You need to have credentials with the following access
 		{
 			"Effect": "Allow",
 			"Action": [
+				"secretsmanager:CreateSecret",
+				"secretsmanager:DescribeSecret",
+				"secretsmanager:GetSecretValue",
+				"secretsmanager:PutSecretValue",
+				"secretsmanager:UpdateSecret",
+				"secretsmanager:DeleteSecret",
+				"secretsmanager:ListSecrets"
+			],
+			"Resource": "*"
+		},
+		{
+			"Effect": "Allow",
+			"Action": [
 				"iam:ListOpenIDConnectProviders",
 				"iam:GetOpenIDConnectProvider",
 				"iam:CreateOpenIDConnectProvider",
@@ -109,6 +122,29 @@ You need to have credentials with the following access
 				"iam:PassRole",
 				"iam:GetRole",
 				"iam:UpdateAssumeRolePolicy"
+			],
+			"Resource": "*"
+		},
+		{
+			"Effect": "Allow",
+			"Action": [
+				"ecs:DescribeClusters",
+				"ecs:CreateCluster",
+				"ecs:ListClusters",
+				"ecs:DescribeTaskDefinition",
+				"ecs:RegisterTaskDefinition",
+				"ecs:ListTaskDefinitions",
+				"ecs:UpdateService",
+				"ecs:DescribeServices",
+				"ecs:ListServices",
+				"ecs:CreateService",
+				"ecs:DeleteService",
+				"ecs:RunTask",
+				"ecs:StopTask",
+				"iam:PassRole",
+				"ecs:DescribeTasks",
+				"ec2:DescribeVpcs",
+				"ec2:DescribeSubnets"
 			],
 			"Resource": "*"
 		},
