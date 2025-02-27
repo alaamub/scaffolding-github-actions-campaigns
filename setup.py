@@ -1311,59 +1311,92 @@ def select_vpc_network_config(aws_region, access_key, secret_key):
     
     return {"subnets": chosen_subnets, "securityGroups": chosen_sgs}
 
+def prompt_for_vpc_cidr():
+    """
+    Prompts the user to choose a CIDR block for the new VPC.
+    Returns the selected CIDR block as a string.
+    """
+    options = ["10.0.0.0/16", "192.168.0.0/16", "172.16.0.0/16"]
+    print("Please choose a CIDR block for the new VPC:")
+    for i, cidr in enumerate(options, 1):
+        print(f"{i}: {cidr}")
+    choice = input("Enter option number (default 1): ").strip()
+    try:
+        idx = int(choice) - 1 if choice else 0
+        if idx < 0 or idx >= len(options):
+            raise ValueError("Invalid selection")
+    except Exception as e:
+        print("Invalid selection, defaulting to 10.0.0.0/16")
+        idx = 0
+    selected_vpc_cidr = options[idx]
+    print(f"Selected VPC CIDR: {selected_vpc_cidr}")
+    return selected_vpc_cidr
+
+def compute_public_subnet_cidr(vpc_cidr):
+    """
+    Computes a default public subnet CIDR based on the selected VPC CIDR.
+    """
+    if vpc_cidr == "10.0.0.0/16":
+        return "10.0.1.0/24"
+    elif vpc_cidr == "192.168.0.0/16":
+        return "192.168.1.0/24"
+    elif vpc_cidr == "172.16.0.0/16":
+        return "172.16.1.0/24"
+    else:
+        return "10.0.1.0/24"
+
 def create_new_vpc_and_sg(aws_region, access_key, secret_key):
     """
-    Idempotently creates a new VPC and associated resources (public subnet, IGW, route table, and security group)
-    tagged/named with the prefix "resourcely-".
-    
-    - VPC: Tag Name = "resourcely-vpc"
-    - Public Subnet: Tag Name = "resourcely-public-subnet"
-    - Internet Gateway: Tag Name = "resourcely-igw"
-    - Route Table: Tag Name = "resourcely-public-rt"
-    - Security Group: Group name = "resourcely-sg"
-    
-    If these resources already exist, they are reused.
-    For the security group, if an egress rule allowing all outbound traffic to 0.0.0.0/0 already exists,
-    it will not try to add it again.
-    
-    Returns a dict with keys: "vpc_id", "subnets" (list), and "securityGroups" (list).
+    Idempotently creates (or reuses) a new VPC (tagged "resourcely-vpc") and associated resources:
+      - Public Subnet (tagged "resourcely-public-subnet")
+      - Internet Gateway (tagged "resourcely-igw")
+      - Route Table (tagged "resourcely-public-rt") with a default route via the IGW
+      - Security Group (named "resourcely-sg") with an outbound rule for 0.0.0.0/0.
+    Prompts the user to choose a VPC CIDR block and computes a default public subnet CIDR.
+    Returns a dictionary with keys: "vpc_id", "subnets" (list), and "securityGroups" (list).
     """
     ec2_client = boto3.client('ec2', aws_access_key_id=access_key,
                               aws_secret_access_key=secret_key, region_name=aws_region)
     
-    # Check for existing VPC with tag Name=resourcely-vpc
+    # Prompt for VPC CIDR and compute default subnet CIDR.
+    vpc_cidr = prompt_for_vpc_cidr()
+    subnet_cidr = compute_public_subnet_cidr(vpc_cidr)
+    
+    # Check for existing VPC with tag Name=resourcely-vpc and matching CIDR.
     vpcs = ec2_client.describe_vpcs(
-        Filters=[{"Name": "tag:Name", "Values": ["resourcely-vpc"]}]
+        Filters=[{"Name": "tag:Name", "Values": ["resourcely-vpc"]},
+                 {"Name": "cidr-block", "Values": [vpc_cidr]}]
     ).get("Vpcs", [])
     if vpcs:
         vpc_id = vpcs[0]["VpcId"]
-        print(f"✅ Found existing VPC: {vpc_id}")
+        print(f"✅ Found existing VPC: {vpc_id} with CIDR {vpc_cidr}")
     else:
-        vpc_response = ec2_client.create_vpc(CidrBlock="10.0.0.0/16")
+        vpc_response = ec2_client.create_vpc(CidrBlock=vpc_cidr)
         vpc_id = vpc_response["Vpc"]["VpcId"]
         ec2_client.create_tags(Resources=[vpc_id], Tags=[{"Key": "Name", "Value": "resourcely-vpc"}])
-        print(f"✅ Created new VPC: {vpc_id}")
+        print(f"✅ Created new VPC: {vpc_id} with CIDR {vpc_cidr}")
         waiter = ec2_client.get_waiter("vpc_available")
         waiter.wait(VpcIds=[vpc_id])
     
-    # Check for existing public subnet in this VPC (tagged resourcely-public-subnet)
+    # Check for existing public subnet in this VPC with tag "resourcely-public-subnet" and matching CIDR.
     subnets = ec2_client.describe_subnets(
         Filters=[{"Name": "vpc-id", "Values": [vpc_id]},
-                 {"Name": "tag:Name", "Values": ["resourcely-public-subnet"]}]
+                 {"Name": "tag:Name", "Values": ["resourcely-public-subnet"]},
+                 {"Name": "cidr-block", "Values": [subnet_cidr]}]
     ).get("Subnets", [])
     if subnets:
         subnet_id = subnets[0]["SubnetId"]
-        print(f"✅ Found existing public subnet: {subnet_id}")
+        print(f"✅ Found existing public subnet: {subnet_id} with CIDR {subnet_cidr}")
     else:
         # Get an availability zone.
         azs = ec2_client.describe_availability_zones()["AvailabilityZones"]
         az = azs[0]["ZoneName"]
-        subnet_response = ec2_client.create_subnet(VpcId=vpc_id, CidrBlock="10.0.1.0/24", AvailabilityZone=az)
+        subnet_response = ec2_client.create_subnet(VpcId=vpc_id, CidrBlock=subnet_cidr, AvailabilityZone=az)
         subnet_id = subnet_response["Subnet"]["SubnetId"]
         ec2_client.create_tags(Resources=[subnet_id], Tags=[{"Key": "Name", "Value": "resourcely-public-subnet"}])
-        print(f"✅ Created public subnet: {subnet_id} in AZ {az}")
+        print(f"✅ Created public subnet: {subnet_id} in AZ {az} with CIDR {subnet_cidr}")
     
-    # Check for an Internet Gateway with tag "resourcely-igw" attached to the VPC
+    # Check for an Internet Gateway with tag "resourcely-igw" attached to the VPC.
     igws = ec2_client.describe_internet_gateways(
         Filters=[{"Name": "attachment.vpc-id", "Values": [vpc_id]},
                  {"Name": "tag:Name", "Values": ["resourcely-igw"]}]
@@ -1378,7 +1411,7 @@ def create_new_vpc_and_sg(aws_region, access_key, secret_key):
         ec2_client.create_tags(Resources=[igw_id], Tags=[{"Key": "Name", "Value": "resourcely-igw"}])
         print(f"✅ Created and attached Internet Gateway: {igw_id}")
     
-    # Check for an existing Route Table tagged "resourcely-public-rt" in this VPC
+    # Check for an existing Route Table tagged "resourcely-public-rt" in this VPC.
     rts = ec2_client.describe_route_tables(
         Filters=[{"Name": "vpc-id", "Values": [vpc_id]},
                  {"Name": "tag:Name", "Values": ["resourcely-public-rt"]}]
