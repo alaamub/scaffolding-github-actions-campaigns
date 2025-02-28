@@ -1885,7 +1885,7 @@ def main():
         ecs_client = boto3.client('ecs', aws_access_key_id=access_key, aws_secret_access_key=secret_key, region_name=region)
         ecs_cluster = "resourcely-campaigns"
         service_name = "resourcely-campaigns-agent"
-        wait_for_ecs_service_healthy(ecs_client, ecs_cluster, service_name, timeout=300, poll_interval=10)
+        wait_for_ecs_service_running(ecs_client, ecs_cluster, service_name, timeout=300, poll_interval=10)
 
     
     tf_config_path = get_tf_config_path(repository, resourcely_api_token)
