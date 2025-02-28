@@ -173,4 +173,5 @@ You need to have credentials with the following access
 }
 
 ### Python Packages 
-pip install PyNaCl boto3 requests
+pip install PyNaCl boto3 requests questionary
+

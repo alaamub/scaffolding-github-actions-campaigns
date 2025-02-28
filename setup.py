@@ -11,6 +11,7 @@ import base64
 import json
 import time
 from nacl import encoding, public
+import questionary
 
 CRED_DIR = os.path.expanduser("~/.resourcely")
 CRED_FILE = os.path.join(CRED_DIR, "credential")
@@ -1656,7 +1657,87 @@ def prompt_deployment_option():
         print("❌ Invalid choice. Please run the script again and choose either 1 or 2.")
         sys.exit(1)
     return choice
-        
+
+# --------------------------
+# Pull guardrails templates 
+# --------------------------
+def select_guardrails_to_activate(resourcely_api_token):
+    """
+    Queries the GraphQL endpoint to retrieve guardrail templates,
+    filters for templates with isCurrent = true and provider = 1,
+    and presents the list as checkboxes (all checked by default) for the user to activate.
+    Returns a list of selected guardrail names.
+    """
+    url = "https://api.dev.resourcely.io/api/graphql"
+    payload = {
+        "operationName": "AllGuardrailTemplates",
+        "variables": {},
+        "query": (
+            "query AllGuardrailTemplates($filter: GuardrailTemplateFilter, $first: Int, $offset: Int, $orderBy: [GuardrailTemplatesOrderBy!]) {"
+            "  allGuardrailTemplates("
+            "    condition: {isCurrent: true}"
+            "    orderBy: $orderBy"
+            "    filter: $filter"
+            "    first: $first"
+            "    offset: $offset"
+            "  ) {"
+            "    totalCount"
+            "    edges {"
+            "      node {"
+            "        name"
+            "        isCurrent"
+            "        provider"
+            "        __typename"
+            "      }"
+            "      __typename"
+            "    }"
+            "    __typename"
+            "  }"
+            "}"
+        )
+    }
+    headers = {
+        "Authorization": f"Bearer {resourcely_api_token}",
+        "Content-Type": "application/json"
+    }
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        if response.status_code != 200:
+            print("❌ Failed to retrieve guardrail templates:", response.text)
+            sys.exit(1)
+        data = response.json()
+    except Exception as e:
+        print("❌ Exception while retrieving guardrail templates:", e)
+        sys.exit(1)
+    
+    # Extract guardrail templates matching the criteria
+    edges = data.get("data", {}).get("allGuardrailTemplates", {}).get("edges", [])
+    edges = data.get("data", {}).get("allGuardrailTemplates", {}).get("edges", [])
+    guardrail_names = [
+        edge.get("node", {}).get("name")
+        for edge in edges
+        if edge.get("node", {}).get("isCurrent")
+           and edge.get("node", {}).get("provider") == 1
+           and edge.get("node", {}).get("name", "").startswith("[S3]")
+    ]
+    
+    
+    if not guardrail_names:
+        print("ℹ️ No guardrail templates found matching the criteria.")
+        return []
+    
+    # Use questionary to display checkboxes with all options checked by default.
+    selected = questionary.checkbox(
+        "Select guardrail templates to activate:",
+        choices=[questionary.Choice(title=name, checked=True) for name in guardrail_names]
+    ).ask()
+    
+    if selected is None:
+        print("❌ No guardrails selected. Exiting.")
+        sys.exit(1)
+    
+    return selected
+
 # --------------------------
 # Trigger campaigns scan 
 # --------------------------
@@ -1899,7 +1980,12 @@ def main():
         service_name = "resourcely-campaigns-agent"
         wait_for_ecs_service_running(ecs_client, ecs_cluster, service_name, timeout=300, poll_interval=10)
 
-    
+    # select guardrails templates
+    selected_guardrails = select_guardrails_to_activate(resourcely_api_token)
+    print("\n✅ The following guardrail templates have been activated:")
+    for g in selected_guardrails:
+        print(" -", g)
+
     tf_config_path = get_tf_config_path(repository, resourcely_api_token)
     trigger_evaluation_scan(repository, tf_config_path, resourcely_api_token)
 
