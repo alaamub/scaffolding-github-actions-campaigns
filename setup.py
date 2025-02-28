@@ -550,6 +550,8 @@ def attach_s3_policy_to_role(iam_client, role_name, bucket_name):
                 "s3:GetBucketPolicy",
                 "s3:PutBucketPolicy",
                 "s3:GetBucketAcl",
+                "s3:GetBucketWebsite",
+                "s3:PutBucketWebsite",
                 "s3:GetBucketCORS",
                 "s3:PutBucketCORS",
                 "s3:PutBucketPublicAccessBlock",
