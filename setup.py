@@ -1603,6 +1603,7 @@ def wait_for_ecs_service_healthy(ecs_client, cluster_name, service_name, timeout
         # List tasks for the service.
         try:
             task_arns = ecs_client.list_tasks(cluster=cluster_name, serviceName=service_name).get("taskArns", [])
+            print(task_arns)
         except Exception as e:
             print("❌ Error listing ECS tasks:", e)
             sys.exit(1)
