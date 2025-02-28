@@ -540,11 +540,28 @@ def attach_s3_policy_to_role(iam_client, role_name, bucket_name):
             "Resource": "arn:aws:s3:::resourcely-campaigns*/*"
         },
         {
-            "Sid": "AllowS3CreateBucket",
+            "Sid": "AllowFullS3BucketManagementForCampaigns",
             "Effect": "Allow",
-            "Action": "s3:CreateBucket",
+            "Action": [
+                "s3:ListAllMyBuckets",
+                "s3:GetBucketLocation",
+                "s3:ListBucket",
+                "s3:CreateBucket",
+                "s3:GetBucketPolicy",
+                "s3:PutBucketPolicy",
+                "s3:GetBucketAcl",
+                "s3:PutBucketPublicAccessBlock",
+                "s3:GetBucketPublicAccessBlock",
+                "s3:GetBucketVersioning",
+                "s3:PutBucketVersioning",
+                "s3:GetBucketOwnershipControls",
+                "s3:PutBucketOwnershipControls",
+                "s3:PutObject",
+                "s3:GetObject",
+                "s3:DeleteObject"
+            ],
             "Resource": "*"
-        },
+            },
         {
             "Sid": "AllowS3GetBucketPolicy",
             "Effect": "Allow",
