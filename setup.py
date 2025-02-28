@@ -1847,8 +1847,8 @@ def main():
     # Now commit and push the changes and enable workflows
     update_main_tf_directly(new_versioning_status="Enabled")
     commit_sha = update_main_and_push()
-    # enable_workflows(owner, repo, token)
-    # wait_for_plan_job_success(owner, repo, commit_sha, token)
+    enable_workflows(owner, repo, token)
+    wait_for_plan_job_success(owner, repo, commit_sha, token)
     
     # check if change management was setup in the account.
     check_change_management_setup(resourcely_api_token)
