@@ -1316,7 +1316,7 @@ def prompt_for_vpc_cidr():
     Prompts the user to choose a CIDR block for the new VPC.
     Returns the selected CIDR block as a string.
     """
-    options = ["10.0.0.0/16", "192.168.0.0/16", "172.16.0.0/16"]
+    options = ["10.0.0.0/16", "192.168.0.0/16", "172.31.0.0/16"]
     print("Please choose a CIDR block for the new VPC:")
     for i, cidr in enumerate(options, 1):
         print(f"{i}: {cidr}")
@@ -1340,8 +1340,8 @@ def compute_public_subnet_cidr(vpc_cidr):
         return "10.0.1.0/24"
     elif vpc_cidr == "192.168.0.0/16":
         return "192.168.1.0/24"
-    elif vpc_cidr == "172.16.0.0/16":
-        return "172.16.1.0/24"
+    elif vpc_cidr == "172.31.0.0/16":
+        return "172.31.0.0/16"
     else:
         return "10.0.1.0/24"
 
