@@ -527,7 +527,7 @@ def attach_s3_policy_to_role(iam_client, role_name, bucket_name):
                 "Sid": "AllowS3ListBucket",
                 "Effect": "Allow",
                 "Action": "s3:ListBucket",
-                "Resource": f"arn:aws:s3:::{bucket_name}"
+                "Resource": "arn:aws:s3:::resourcely-campaigns*"
             },
             {
                 "Sid": "AllowS3ObjectAccess",
@@ -538,7 +538,7 @@ def attach_s3_policy_to_role(iam_client, role_name, bucket_name):
                     "s3:CreateBucket",
                     "s3:DeleteObject"
                 ],
-                "Resource": f"arn:aws:s3:::{bucket_name}/*"
+                "Resource": "arn:aws:s3:::resourcely-campaigns*/*"
             }
         ]
     }
