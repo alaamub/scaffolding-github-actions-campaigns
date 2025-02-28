@@ -1539,7 +1539,7 @@ def deploy_as_ecs_service(ngrok_seed, ngrok_token, resourcely_api_token, iam_cli
             "portMappings": [],
             "essential": True,
             "environment": [
-                {"name": "AUTH0_DOMAIN", "value": "https://login.dev.portal.resourcely.io"},
+                {"name": "AUTH0_DOMAIN", "value": "https://login.portal.dev.resourcely.io"},
                 {"name": "APP_ENV", "value": "dev"},
                 {"name": "RESOURCELY_API_HOST", "value": "https://api.dev.resourcely.io"},
                 {"name": "AUTH0_AUDIENCE", "value": "https://campaigns-agent.dev.resourcely.io"}
