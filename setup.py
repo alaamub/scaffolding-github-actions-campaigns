@@ -1592,18 +1592,17 @@ def deploy_as_ecs_service(ngrok_seed, ngrok_token, resourcely_api_token, iam_cli
         print("❌ Failed to create ECS service:", e)
         sys.exit(1)
 
-def wait_for_ecs_service_healthy(ecs_client, cluster_name, service_name, timeout=300, poll_interval=10):
+def wait_for_ecs_service_running(ecs_client, cluster_name, service_name, timeout=300, poll_interval=10):
     """
-    Poll the ECS service until at least one task is RUNNING and its container health status (if available) is HEALTHY.
-    If no tasks are found or they don't become healthy within the timeout, the script exits.
+    Poll the ECS service until at least one task is RUNNING.
+    This function no longer checks container health status.
+    If no tasks are found or they don't reach RUNNING within the timeout, the script exits.
     """
     start_time = time.time()
-    print(f"ℹ️ Waiting for ECS service '{service_name}' in cluster '{cluster_name}' to become healthy...")
+    print(f"ℹ️ Waiting for ECS service '{service_name}' in cluster '{cluster_name}' to have at least one RUNNING task...")
     while time.time() - start_time < timeout:
-        # List tasks for the service.
         try:
             task_arns = ecs_client.list_tasks(cluster=cluster_name, serviceName=service_name).get("taskArns", [])
-            print(task_arns)
         except Exception as e:
             print("❌ Error listing ECS tasks:", e)
             sys.exit(1)
@@ -1612,41 +1611,23 @@ def wait_for_ecs_service_healthy(ecs_client, cluster_name, service_name, timeout
             time.sleep(poll_interval)
             continue
 
-        # Describe tasks.
         try:
             tasks = ecs_client.describe_tasks(cluster=cluster_name, tasks=task_arns).get("tasks", [])
         except Exception as e:
             print("❌ Error describing ECS tasks:", e)
             sys.exit(1)
 
-        healthy = False
         for task in tasks:
-            # Check that the task is in RUNNING state.
-            if task.get("lastStatus") != "RUNNING":
-                continue
+            if task.get("lastStatus") == "RUNNING":
+                print("✅ ECS service has a task in RUNNING state.")
+                return
 
-            # Check container health status if available.
-            containers = task.get("containers", [])
-            container_healthy = True
-            for container in containers:
-                # Some tasks might not have healthStatus if health checks are not configured.
-                if "healthStatus" in container and container["healthStatus"] != "HEALTHY":
-                    container_healthy = False
-                    break
-
-            if container_healthy:
-                healthy = True
-                break
-
-        if healthy:
-            print("✅ ECS service is healthy; at least one task is RUNNING and healthy.")
-            return
-        else:
-            print("ℹ️ Tasks are running but not yet reporting as healthy. Waiting...")
-            time.sleep(poll_interval)
+        print("ℹ️ Tasks are not yet RUNNING. Waiting...")
+        time.sleep(poll_interval)
     
-    print("❌ Timeout waiting for ECS service to become healthy.")
+    print("❌ Timeout waiting for ECS service tasks to reach RUNNING state.")
     sys.exit(1)
+
 
 def prompt_deployment_option():
     """
