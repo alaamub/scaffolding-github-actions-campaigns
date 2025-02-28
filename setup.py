@@ -535,6 +535,7 @@ def attach_s3_policy_to_role(iam_client, role_name, bucket_name):
                 "Action": [
                     "s3:GetObject",
                     "s3:PutObject",
+                    "s3:CreateBucket",
                     "s3:DeleteObject"
                 ],
                 "Resource": f"arn:aws:s3:::{bucket_name}/*"
