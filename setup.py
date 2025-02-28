@@ -523,29 +523,35 @@ def attach_s3_policy_to_role(iam_client, role_name, bucket_name):
     policy_document = {
         "Version": "2012-10-17",
         "Statement": [
-            {
+        {
             "Sid": "AllowS3ListBucket",
             "Effect": "Allow",
-                "Action": "s3:ListBucket",
-                "Resource": "arn:aws:s3:::resourcely-campaigns*"
-            },
-            {
-                "Sid": "AllowS3ObjectAccess",
-                "Effect": "Allow",
-                "Action": [
-                    "s3:GetObject",
-                    "s3:PutObject",
-                    "s3:DeleteObject"
-                ],
-                "Resource": "arn:aws:s3:::resourcely-campaigns*/*"
-            },
-            {
-                "Sid": "AllowS3CreateBucket",
-                "Effect": "Allow",
-                "Action": "s3:CreateBucket",
-                "Resource": "*"
-            }
-            ]
+            "Action": "s3:ListBucket",
+            "Resource": "arn:aws:s3:::resourcely-campaigns*"
+        },
+        {
+            "Sid": "AllowS3ObjectAccess",
+            "Effect": "Allow",
+            "Action": [
+                "s3:GetObject",
+                "s3:PutObject",
+                "s3:DeleteObject"
+            ],
+            "Resource": "arn:aws:s3:::resourcely-campaigns*/*"
+        },
+        {
+            "Sid": "AllowS3CreateBucket",
+            "Effect": "Allow",
+            "Action": "s3:CreateBucket",
+            "Resource": "*"
+        },
+        {
+            "Sid": "AllowS3GetBucketPolicy",
+            "Effect": "Allow",
+            "Action": "s3:GetBucketPolicy",
+            "Resource": "arn:aws:s3:::resourcely-campaigns*"
+        }
+        ]
     }
     policy_name = "TerraformStateS3AccessPolicy"
     try:
