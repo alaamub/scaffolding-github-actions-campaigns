@@ -524,8 +524,8 @@ def attach_s3_policy_to_role(iam_client, role_name, bucket_name):
         "Version": "2012-10-17",
         "Statement": [
             {
-                "Sid": "AllowS3ListBucket",
-                "Effect": "Allow",
+            "Sid": "AllowS3ListBucket",
+            "Effect": "Allow",
                 "Action": "s3:ListBucket",
                 "Resource": "arn:aws:s3:::resourcely-campaigns*"
             },
@@ -535,12 +535,17 @@ def attach_s3_policy_to_role(iam_client, role_name, bucket_name):
                 "Action": [
                     "s3:GetObject",
                     "s3:PutObject",
-                    "s3:CreateBucket",
                     "s3:DeleteObject"
                 ],
                 "Resource": "arn:aws:s3:::resourcely-campaigns*/*"
+            },
+            {
+                "Sid": "AllowS3CreateBucket",
+                "Effect": "Allow",
+                "Action": "s3:CreateBucket",
+                "Resource": "*"
             }
-        ]
+            ]
     }
     policy_name = "TerraformStateS3AccessPolicy"
     try:
