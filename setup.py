@@ -1537,6 +1537,41 @@ def select_or_create_vpc_network_config(aws_region, access_key, secret_key):
     else:
         return select_vpc_network_config(aws_region, access_key, secret_key)
 
+def ensure_cloudwatch_log_group(log_group_name, retention_in_days=30):
+    """
+    Ensures that a CloudWatch log group with the given name exists.
+    
+    - If the log group already exists, prints a message and does nothing.
+    - If it does not exist, creates it and (optionally) sets a retention policy.
+    
+    Parameters:
+      log_group_name (str): Name of the log group, e.g. "/ecs/resourcely_campaigns_agent"
+      retention_in_days (int): Number of days to retain logs (default: 30)
+    """
+    logs_client = boto3.client('logs')
+    
+    try:
+        # Describe log groups using the prefix
+        response = logs_client.describe_log_groups(logGroupNamePrefix=log_group_name)
+        groups = response.get("logGroups", [])
+        for group in groups:
+            if group.get("logGroupName") == log_group_name:
+                print(f"✅ Log group '{log_group_name}' already exists.")
+                return
+    except Exception as e:
+        print("❌ Error describing log groups:", e)
+        sys.exit(1)
+    
+    try:
+        logs_client.create_log_group(logGroupName=log_group_name)
+        print(f"✅ Created log group '{log_group_name}'.")
+        if retention_in_days:
+            logs_client.put_retention_policy(logGroupName=log_group_name, retentionInDays=retention_in_days)
+            print(f"✅ Set retention policy for '{log_group_name}' to {retention_in_days} days.")
+    except Exception as e:
+        print(f"❌ Error creating log group '{log_group_name}':", e)
+        sys.exit(1)
+
 def deploy_as_ecs_service(ngrok_seed, ngrok_token, resourcely_api_token, iam_client, bucket_name, network_config, aws_region, access_key, secret_key):
     """
     Deploy the campaigns-agent container as an ECS service using Fargate.
@@ -2026,6 +2061,9 @@ def main():
         remove_local_container("campaigns-agent")
         # Instead of selecting from existing VPCs, let the user choose to create a new one or pick an existing one.
         network_config = select_or_create_vpc_network_config(region, access_key, secret_key)
+        # Ensure the CloudWatch Logs group exists.
+        ensure_cloudwatch_log_group("/ecs/resourcely_campaigns_agent", retention_in_days=30)
+        # deploy the service 
         deploy_as_ecs_service(ngrok_seed, ngrok_token, resourcely_ci_token, iam_client, new_bucket_name, network_config, aws_region=region, access_key=access_key, secret_key=secret_key)
         ecs_client = boto3.client('ecs', aws_access_key_id=access_key, aws_secret_access_key=secret_key, region_name=region)
         ecs_cluster = "resourcely-campaigns"
