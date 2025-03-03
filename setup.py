@@ -164,7 +164,7 @@ def check_aws_permissions(access_key, secret_key, region):
 # RESOURCELY_API_TOKEN Functions
 # --------------------------
 
-def get_resourcely_api_token():
+def get_resourcely_api_admin_token():
     """Get RESOURCELY_API_TOKEN from environment or prompt the user and set it in the environment."""
     token = os.getenv("RESOURCELY_API_TOKEN")
     if not token:
@@ -203,7 +203,7 @@ def check_resourcely_api_token(token):
         print("❌ Error decoding RESOURCELY_API_TOKEN:", e)
         sys.exit(1)
 
-def verify_resourcely_api_token(token):
+def verify_resourcely_api_admin_token(token):
     """
     Verify the RESOURCELY_API_TOKEN by calling the /users/current-user endpoint.
     Checks that the status is 200 and that the returned JSON contains an admin role.
@@ -224,6 +224,45 @@ def verify_resourcely_api_token(token):
             print("✅ RESOURCELY_API_TOKEN external validation passed. Admin role confirmed.")
     except Exception as e:
         print("❌ Error validating RESOURCELY_API_TOKEN with API:", e)
+        sys.exit(1)
+
+def fetch_ci_token(original_token):
+    """
+    Fetches a fresh CI token by calling the Resourcely manage tokens endpoint.
+    
+    POST https://api.dev.resourcely.io/api/v1/manage/tokens
+    Payload:
+      {
+          "roles": [1],
+          "timeToLiveSeconds": 31104000
+      }
+    
+    On success, returns the new access token from the response.
+    """
+    url = "https://api.dev.resourcely.io/api/v1/manage/tokens"
+    payload = {
+        "roles": [1],
+        "timeToLiveSeconds": 31104000
+    }
+    headers = {
+        "Authorization": f"Bearer {original_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        if response.status_code not in [200, 201]:
+            print(f"❌ Failed to fetch management token (status code {response.status_code}): {response.text}")
+            sys.exit(1)
+        data = response.json()
+        access_token = data.get("access_token")
+        if not access_token:
+            print("❌ Management token not found in response.")
+            sys.exit(1)
+        print("✅ Fetched management token successfully.")
+        return access_token
+    except Exception as e:
+        print(f"❌ Exception while fetching management token: {e}")
         sys.exit(1)
 
 # --------------------------
@@ -1897,10 +1936,12 @@ def main():
     check_aws_permissions(access_key, secret_key, region)
     
     print("\n✅ AWS checks passed! Now checking RESOURCELY_API_TOKEN...\n")
-    # RESOURCELY_API_TOKEN Checks
-    resourcely_api_token = get_resourcely_api_token()
-    check_resourcely_api_token(resourcely_api_token)
-    verify_resourcely_api_token(resourcely_api_token)
+    # resourcely_api_admin_token check, this is an admin token that is valid for only 24 hours
+    resourcely_api_admin_token = get_resourcely_api_admin_token()
+    check_resourcely_api_token(resourcely_api_admin_token)
+    verify_resourcely_api_admin_token(resourcely_api_admin_token)
+
+    resourcely_ci_token = fetch_ci_token(resourcely_api_admin_token)
     
     print("\n✅ All basic checks passed! Now creating IAM role for GitHub Actions OIDC...\n")
     # Onboarding Step: Create OIDC provider and IAM role for GitHub Actions
@@ -1934,7 +1975,7 @@ def main():
     patch_resourcely_yaml(new_bucket_name)
 
     # Add RESOURCELY_API_TOKEN to github actions secrets 
-    update_github_secret(owner, repo, token, "RESOURCELY_API_TOKEN", resourcely_api_token)
+    update_github_secret(owner, repo, token, "RESOURCELY_API_TOKEN", resourcely_ci_token)
 
     # Now commit and push the changes and enable workflows
     update_main_tf_directly(new_versioning_status="Enabled")
@@ -1943,23 +1984,23 @@ def main():
     wait_for_plan_job_success(owner, repo, commit_sha, token)
     
     # check if change management was setup in the account.
-    check_change_management_setup(resourcely_api_token)
+    check_change_management_setup(resourcely_api_admin_token)
 
     # check if .resourcely.yaml was setup in the account.
-    poll_yaml_config_diagnostics(resourcely_api_token, repository, max_attempts=5, interval=5)
+    poll_yaml_config_diagnostics(resourcely_api_admin_token, repository, max_attempts=5, interval=5)
     
     # check if vcs was setup in the account.
-    poll_diagnostics(resourcely_api_token, max_attempts=5, interval=5)
+    poll_diagnostics(resourcely_api_admin_token, max_attempts=5, interval=5)
 
     # check ngrok
-    ensure_ngrok_setup(resourcely_api_token)
+    ensure_ngrok_setup(resourcely_api_admin_token)
 
     # run campaigns agent
     ngrok_data = load_ngrok_credentials()
     if not ngrok_data:
         # If credentials file is missing (this shouldn't happen because ensure_ngrok_setup was called earlier),
         # call ensure_ngrok_setup to provision ngrok and save credentials.
-        ngrok_data = ensure_ngrok_setup(resourcely_api_token)
+        ngrok_data = ensure_ngrok_setup(resourcely_api_admin_token)
     ngrok_tunnel = ngrok_data.get("tunnel", {})
     ngrok_seed = ngrok_tunnel.get("seed")
     ngrok_token = ngrok_tunnel.get("auth_token")
@@ -1968,29 +2009,29 @@ def main():
     option = prompt_deployment_option()
     
     if option == "1":
-        run_docker_locally(ngrok_seed, ngrok_token, resourcely_api_token)
+        run_docker_locally(ngrok_seed, ngrok_token, resourcely_ci_token)
     elif option == "2":
         # Before deploying as ECS, stop and remove any locally running container named 'campaigns-agent'.
         remove_local_container("campaigns-agent")
         # Instead of selecting from existing VPCs, let the user choose to create a new one or pick an existing one.
         network_config = select_or_create_vpc_network_config(region, access_key, secret_key)
-        deploy_as_ecs_service(ngrok_seed, ngrok_token, resourcely_api_token, iam_client, new_bucket_name, network_config, aws_region=region, access_key=access_key, secret_key=secret_key)
+        deploy_as_ecs_service(ngrok_seed, ngrok_token, resourcely_ci_token, iam_client, new_bucket_name, network_config, aws_region=region, access_key=access_key, secret_key=secret_key)
         ecs_client = boto3.client('ecs', aws_access_key_id=access_key, aws_secret_access_key=secret_key, region_name=region)
         ecs_cluster = "resourcely-campaigns"
         service_name = "resourcely-campaigns-agent"
         wait_for_ecs_service_running(ecs_client, ecs_cluster, service_name, timeout=300, poll_interval=10)
 
     # select guardrails templates
-    selected_guardrails = select_guardrails_to_activate(resourcely_api_token)
+    selected_guardrails = select_guardrails_to_activate(resourcely_api_admin_token)
     print("\n✅ The following guardrail templates have been activated:")
     for g in selected_guardrails:
         print(" -", g)
 
-    tf_config_path = get_tf_config_path(repository, resourcely_api_token)
-    trigger_evaluation_scan(repository, tf_config_path, resourcely_api_token)
+    tf_config_path = get_tf_config_path(repository, resourcely_api_admin_token)
+    trigger_evaluation_scan(repository, tf_config_path, resourcely_api_admin_token)
 
     # Now, poll the diagnostics endpoint to confirm the campaigns agent is reachable, registered, and its evaluations are successful.
-    poll_agent_diagnostics(resourcely_api_token, max_attempts=5, interval=5)
+    poll_agent_diagnostics(resourcely_api_admin_token, max_attempts=5, interval=5)
     
     print("\n🚀 Onboarding complete! Now go to https://portal.dev.resourcely.io/remediation Happy hacking!...\n")
 
