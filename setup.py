@@ -252,17 +252,17 @@ def fetch_ci_token(original_token):
     try:
         response = requests.post(url, headers=headers, json=payload)
         if response.status_code not in [200, 201]:
-            print(f"❌ Failed to fetch management token (status code {response.status_code}): {response.text}")
+            print(f"❌ Failed to fetch CI token (status code {response.status_code}): {response.text}")
             sys.exit(1)
         data = response.json()
         access_token = data.get("access_token")
         if not access_token:
-            print("❌ Management token not found in response.")
+            print("❌ CI token not found in response.")
             sys.exit(1)
-        print("✅ Fetched management token successfully.")
+        print("✅ Fetched CI token successfully.")
         return access_token
     except Exception as e:
-        print(f"❌ Exception while fetching management token: {e}")
+        print(f"❌ Exception while fetching CI token: {e}")
         sys.exit(1)
 
 # --------------------------
@@ -1600,7 +1600,18 @@ def deploy_as_ecs_service(ngrok_seed, ngrok_token, resourcely_api_token, iam_cli
                 {"name": "RESOURCELY_NGROK_TUNNEL_SEED", "valueFrom": f"{consolidated_secret_arn}:RESOURCELY_NGROK_TUNNEL_SEED::"},
                 {"name": "RESOURCELY_NGROK_TOKEN", "valueFrom": f"{consolidated_secret_arn}:RESOURCELY_NGROK_TOKEN::"},
                 {"name": "RESOURCELY_API_TOKEN", "valueFrom": f"{consolidated_secret_arn}:RESOURCELY_API_TOKEN::"}
-            ]
+            ],
+             "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/resourcely_campaigns_agent",
+                    "mode": "non-blocking",
+                    "awslogs-create-group": "true",
+                    "max-buffer-size": "25m",
+                    "awslogs-region": "us-west-2",
+                    "awslogs-stream-prefix": "ecs"
+                }
+            }
         }
     ]
     
