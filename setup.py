@@ -1526,16 +1526,47 @@ def create_new_vpc_and_sg(aws_region, access_key, secret_key):
 
 def select_or_create_vpc_network_config(aws_region, access_key, secret_key):
     """
-    Prompt the user: either choose to create a new VPC or select from existing ones.
-    If the user chooses 'y' (create new), then create a new VPC and security group.
-    Otherwise, call your existing function select_vpc_network_config().
-    Returns a dict with keys "subnets" and "securityGroups" containing the chosen IDs.
+    Checks for an existing VPC tagged with Name "resourcely-vpc".  
+    If one exists, it automatically returns its network configuration (using the first available subnet and security group).
+    If no such VPC exists, it prompts the user whether to create a new VPC and security group or select one manually.
+    
+    Returns a dict with keys "subnets" and "securityGroups".
     """
-    choice = input("Do you want to create a new VPC and security group? (y/n): ").strip().lower()
-    if choice == "y":
-        return create_new_vpc_and_sg(aws_region, access_key, secret_key)
+    ec2_client = boto3.client('ec2', aws_access_key_id=access_key,
+                              aws_secret_access_key=secret_key, region_name=aws_region)
+    
+    # Check for existing VPC(s) tagged "resourcely-vpc"
+    vpcs = ec2_client.describe_vpcs(
+        Filters=[{"Name": "tag:Name", "Values": ["resourcely-vpc"]}]
+    ).get("Vpcs", [])
+    
+    if vpcs:
+        vpc_id = vpcs[0]["VpcId"]
+        print(f"✅ Found existing VPC: {vpc_id}")
+        # Retrieve subnets in that VPC.
+        subnets_resp = ec2_client.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])
+        subnets = subnets_resp.get("Subnets", [])
+        if not subnets:
+            print("❌ No subnets found in the existing VPC.")
+            sys.exit(1)
+        subnet_id = subnets[0]["SubnetId"]
+        # Retrieve security groups in that VPC.
+        sgs_resp = ec2_client.describe_security_groups(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])
+        sgs = sgs_resp.get("SecurityGroups", [])
+        if not sgs:
+            print("❌ No security groups found in the existing VPC.")
+            sys.exit(1)
+        sg_id = sgs[0]["GroupId"]
+        print(f"✅ Reusing subnet: {subnet_id} and security group: {sg_id} from VPC {vpc_id}")
+        return {"subnets": [subnet_id], "securityGroups": [sg_id]}
     else:
-        return select_vpc_network_config(aws_region, access_key, secret_key)
+        # No existing VPC found; prompt user.
+        choice = input("No VPC with tag 'resourcely-vpc' found. Do you want to create a new VPC and security group? (y/n): ").strip().lower()
+        if choice == "y":
+            return create_new_vpc_and_sg(aws_region, access_key, secret_key)
+        else:
+            # Alternatively, let the user select from existing VPCs.
+            return select_vpc_network_config(aws_region, access_key, secret_key)
 
 def ensure_cloudwatch_log_group(log_group_name, retention_in_days=30):
     """
@@ -1744,86 +1775,6 @@ def prompt_deployment_option():
     return choice
 
 # --------------------------
-# Pull guardrails templates 
-# --------------------------
-def select_guardrails_to_activate(resourcely_api_token):
-    """
-    Queries the GraphQL endpoint to retrieve guardrail templates,
-    filters for templates with isCurrent = true and provider = 1,
-    and presents the list as checkboxes (all checked by default) for the user to activate.
-    Returns a list of selected guardrail names.
-    """
-    url = "https://api.dev.resourcely.io/api/graphql"
-    payload = {
-        "operationName": "AllGuardrailTemplates",
-        "variables": {},
-        "query": (
-            "query AllGuardrailTemplates($filter: GuardrailTemplateFilter, $first: Int, $offset: Int, $orderBy: [GuardrailTemplatesOrderBy!]) {"
-            "  allGuardrailTemplates("
-            "    condition: {isCurrent: true}"
-            "    orderBy: $orderBy"
-            "    filter: $filter"
-            "    first: $first"
-            "    offset: $offset"
-            "  ) {"
-            "    totalCount"
-            "    edges {"
-            "      node {"
-            "        name"
-            "        isCurrent"
-            "        provider"
-            "        __typename"
-            "      }"
-            "      __typename"
-            "    }"
-            "    __typename"
-            "  }"
-            "}"
-        )
-    }
-    headers = {
-        "Authorization": f"Bearer {resourcely_api_token}",
-        "Content-Type": "application/json"
-    }
-    try:
-        response = requests.post(url, headers=headers, json=payload)
-        if response.status_code != 200:
-            print("❌ Failed to retrieve guardrail templates:", response.text)
-            sys.exit(1)
-        data = response.json()
-    except Exception as e:
-        print("❌ Exception while retrieving guardrail templates:", e)
-        sys.exit(1)
-    
-    # Extract guardrail templates matching the criteria
-    edges = data.get("data", {}).get("allGuardrailTemplates", {}).get("edges", [])
-    edges = data.get("data", {}).get("allGuardrailTemplates", {}).get("edges", [])
-    guardrail_names = [
-        edge.get("node", {}).get("name")
-        for edge in edges
-        if edge.get("node", {}).get("isCurrent")
-           and edge.get("node", {}).get("provider") == 1
-           and edge.get("node", {}).get("name", "").startswith("[S3]")
-    ]
-    
-    
-    if not guardrail_names:
-        print("ℹ️ No guardrail templates found matching the criteria.")
-        return []
-    
-    # Use questionary to display checkboxes with all options checked by default.
-    selected = questionary.checkbox(
-        "Select guardrail templates to activate:",
-        choices=[questionary.Choice(title=name, checked=True) for name in guardrail_names]
-    ).ask()
-    
-    if selected is None:
-        print("❌ No guardrails selected. Exiting.")
-        sys.exit(1)
-    
-    return selected
-
-# --------------------------
 # Trigger campaigns scan 
 # --------------------------
 def get_tf_config_path(repository, resourcely_api_token):
@@ -2025,9 +1976,9 @@ def main():
 
     # Now commit and push the changes and enable workflows
     update_main_tf_directly(new_versioning_status="Enabled")
-    commit_sha = update_main_and_push()
-    enable_workflows(owner, repo, token)
-    wait_for_plan_job_success(owner, repo, commit_sha, token)
+    # commit_sha = update_main_and_push()
+    # enable_workflows(owner, repo, token)
+    # wait_for_plan_job_success(owner, repo, commit_sha, token)
     
     # check if change management was setup in the account.
     check_change_management_setup(resourcely_api_admin_token)
@@ -2069,12 +2020,6 @@ def main():
         ecs_cluster = "resourcely-campaigns"
         service_name = "resourcely-campaigns-agent"
         wait_for_ecs_service_running(ecs_client, ecs_cluster, service_name, timeout=300, poll_interval=10)
-
-    # select guardrails templates
-    selected_guardrails = select_guardrails_to_activate(resourcely_api_admin_token)
-    print("\n✅ The following guardrail templates have been activated:")
-    for g in selected_guardrails:
-        print(" -", g)
 
     tf_config_path = get_tf_config_path(repository, resourcely_api_admin_token)
     trigger_evaluation_scan(repository, tf_config_path, resourcely_api_admin_token)
