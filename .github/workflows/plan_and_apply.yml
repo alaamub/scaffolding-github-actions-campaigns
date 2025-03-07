@@ -1,6 +1,7 @@
 name: Terraform Plan and Apply
 on:
   workflow_call:
+  workflow_dispatch:
 
 jobs:
   get-plan-id:
