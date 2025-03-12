@@ -2,6 +2,11 @@
 
 resource "aws_s3_bucket" "resourcely-campaigns-test-bucket_aannxfsuzheykxhtMshbmm94dxCHA" {
   bucket = "resourcely-campaigns-test-bucketaannxfsuzheykxht"
+
+   lifecycle {
+    prevent_destroy = true
+  }
+
 }
 
 resource "aws_s3_bucket_public_access_block" "resourcely-campaigns-test-bucket_aannxfsuzheykxhtMshbmm94dxCHA" {
