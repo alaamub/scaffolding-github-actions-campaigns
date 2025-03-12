@@ -1,6 +1,11 @@
 name: Terraform Plan and Apply
 on:
   workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
   get-plan-id:
