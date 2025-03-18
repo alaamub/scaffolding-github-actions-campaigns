@@ -11,4 +11,4 @@ terraform_config_roots:
     campaign_config:
       state_file_config:
         s3:
-          path: s3://campaigns-terraform-state-location/terraform.tfstate
+          path: s3://resourcely-campaigns-terraform-state-315040492946-us-west-2/terraform.tfstate
